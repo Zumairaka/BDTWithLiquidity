@@ -5,6 +5,7 @@ library Errors {
     /* Helpers */
     error ZeroAddress();
     error ZeroAmount();
+    error InvalidPrice();
 
     /* OwnershipUpgradeable */
     error NotOwner();
@@ -18,5 +19,7 @@ library Errors {
     /* BDT Liquidity */
     error NotEnoughUSDTTokenForLiquidity();
     error NotEnoughBDTTokenForLiquidity();
+    error NotEnoughLPTokensToRemoveLiquidity();
     error InvalidRate();
+    error LockingPeriodNotOver();
 }

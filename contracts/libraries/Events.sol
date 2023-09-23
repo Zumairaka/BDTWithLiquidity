@@ -40,8 +40,29 @@ library Events {
     event AddedLiquidity(uint256 amountA, uint256 amountB, uint256 liquidity);
 
     /**
+     * @notice emitted when the Liquidity is removed from the pancake swap (USDT/BDT)
+     * @param amountA amount of USDT
+     * @param amountB amount of BDT
+     * @param liquidity amount of LP token
+     */
+    event RemovedLiquidity(uint256 amountA, uint256 amountB, uint256 liquidity);
+
+    /**
      * @notice emitted when the slippage rate is modified
      * @param newSlippageRate new slippage rate
      */
     event SlippageRateModified(uint256 newSlippageRate);
+
+    /**
+     * @notice emitted when the primary liquidity status is modified
+     * @param newStatus new status
+     */
+    event PrimaryLiquidityStatusModified(bool newStatus);
+
+    /**
+     * @notice emitted when the price oracle addresses are modified
+     * @param USDTOracle address of USDT oracle
+     * @param BDTOracle address of BDT oracle
+     */
+    event PriceOraclesModified(address USDTOracle, address BDTOracle);
 }
