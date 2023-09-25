@@ -21,20 +21,18 @@ async function main() {
     `BDT Token Liquidity without private is deploying with the account ${deployer.address}`
   );
 
-  const BdtTokenLiquidity = await ethers.getContractFactory(
-    "BlueDiamondTokenLiquidity"
-  );
-  const bdtTokenLiquidity = await upgrades.deployProxy(
-    BdtTokenLiquidity,
+  const BdtLiquidity = await ethers.getContractFactory("BlueDiamondLiquidity");
+  const bdtLiquidity = await upgrades.deployProxy(
+    BdtLiquidity,
     [usdtTest, bdtTest, routerTest, usdtOracle],
     {
       initializer: "initialize",
     }
   );
 
-  await bdtTokenLiquidity.deployed();
+  await bdtLiquidity.deployed();
   console.log(
-    `BDT Token Liquidity is deployed to the address ${bdtTokenLiquidity.address}`
+    `BDT Token Liquidity is deployed to the address ${bdtLiquidity.address}`
   );
 }
 

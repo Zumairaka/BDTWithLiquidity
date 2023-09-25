@@ -22,7 +22,7 @@ import "../interfaces/IPancakeRouter01.sol";
 import "../interfaces/IPancakeRouter02.sol";
 import "../interfaces/AggregatorV3Interface.sol";
 
-contract BlueDiamondTokenLiquidity is
+contract BlueDiamondLiquidity is
     ReentrancyGuardUpgradeable,
     OwnershipUpgradeable
 {
