@@ -37,21 +37,22 @@ contract BlueDiamondTokenLiquidity is
 
     uint256 private _slippageRate;
     uint256 private _lockingPeriod;
-    bool private _primaryLiquidity;
 
     /* Public Functions */
     /**
      * @notice this function is for initializing the contract
-     * @dev set the token name, symbol and initial supply
+     * @dev set the token addresses, router and oracles
      */
     function initialize(
         address usdt_,
         address bdt_,
-        address router_
+        address router_,
+        address usdtOracle_
     ) public initializer {
         Helpers._checkAddress(usdt_);
         Helpers._checkAddress(bdt_);
         Helpers._checkAddress(router_);
+        Helpers._checkAddress(usdtOracle_);
 
         __Ownership_init();
         __ReentrancyGuard_init();
@@ -59,9 +60,8 @@ contract BlueDiamondTokenLiquidity is
         USDT = usdt_;
         BDT = bdt_;
         PANCAKESWAP_V2_ROUTER = router_;
-        USDT_PRICE_ORACLE = 0xEca2605f0BCF2BA5966372C99837b1F182d3D620;
+        USDT_PRICE_ORACLE = usdtOracle_;
         _slippageRate = 50;
-        _primaryLiquidity = true;
     }
 
     /**
@@ -83,11 +83,13 @@ contract BlueDiamondTokenLiquidity is
      * @dev balances of both the tokens are verified before the transfer
      * @dev current price for both the tokens will be fetched from the oracle if not primary liquidity
      * @param amountA_ amount of USDT token
-     * @param lockingPeriod_ LP locking time
+     * @param lockingPeriod_ LP locking time in seconds
+     * @param primaryLiquidity_ true if primary liquidity; false otherwise
      */
     function AddLiquidity(
         uint256 amountA_,
-        uint256 lockingPeriod_
+        uint256 lockingPeriod_,
+        bool primaryLiquidity_
     ) external onlyOwner nonReentrant {
         Helpers._checkAmount(amountA_);
 
@@ -102,13 +104,11 @@ contract BlueDiamondTokenLiquidity is
         // check if primary liquidity
         uint256 amountB_;
 
-        if (_primaryLiquidity) {
+        if (primaryLiquidity_) {
             amountB_ = amountA_;
-            _primaryLiquidity = false;
-
-            emit Events.PrimaryLiquidityStatusModified(false);
         } else {
             amountB_ = _getAmountBDT(amountA_);
+            Helpers._checkAmount(amountB_);
         }
 
         // check BDT token balance
@@ -118,27 +118,47 @@ contract BlueDiamondTokenLiquidity is
 
         // set locking period
         if (lockingPeriod_ > 0) {
-            _lockingPeriod = lockingPeriod_;
+            _lockingPeriod = block.timestamp + lockingPeriod_;
         }
 
         // transfer both the tokens to this smart contract
         _usdt.safeTransferFrom(owner(), address(this), amountA_);
         _bdt.safeTransferFrom(owner(), address(this), amountB_);
 
-        // add liquidity and lock LP tokens
-        _addLiquidity(
-            amountA_,
-            amountB_,
-            amountA_ - _getSlippageRate(amountA_),
-            amountB_ - _getSlippageRate(amountB_)
-        );
+        uint256 amountAMin_ = amountA_ - _getSlippageRate(amountA_);
+        uint256 amountBMin_ = amountB_ - _getSlippageRate(amountB_);
+
+        Helpers._checkAmount(amountAMin_);
+        Helpers._checkAmount(amountBMin_);
+
+        // give approval to the router for adding liquidity
+        _approveUSDT(_usdt, amountA_);
+        _approveBDT(_bdt, amountB_);
+
+        // add liquidity
+        (
+            uint256 amountA,
+            uint256 amountB,
+            uint256 liquidity
+        ) = IPancakeRouter02(PANCAKESWAP_V2_ROUTER).addLiquidity(
+                USDT,
+                BDT,
+                amountA_,
+                amountB_,
+                amountAMin_,
+                amountBMin_,
+                address(this),
+                block.timestamp
+            );
+
+        emit Events.AddedLiquidity(amountA, amountB, liquidity);
     }
 
     /**
      * @notice function for removing liquidity
      * @param lpAmount_ amount of LP tokens that needs to be removed
      * @param account_ account to which the tokens has to be transferred
-     * @dev need to find the amountMinA, amountMinB to avoid sandwich attack
+     * @dev need to find the amountAMin, amountBMin to avoid sandwich attack
      */
     function removeLiquidity(
         uint256 lpAmount_,
@@ -170,15 +190,13 @@ contract BlueDiamondTokenLiquidity is
                 USDT,
                 BDT,
                 lpAmount_,
-                amountAMin,
-                amountBMin,
+                amountAMin - _getSlippageRate(amountAMin),
+                amountBMin - _getSlippageRate(amountBMin),
                 account_,
                 block.timestamp
             );
 
-        emit Events.RemovedLiquidity(amountA, amountB, lpAmount_);
-
-        // find minimum tokens to be received
+        emit Events.RemovedLiquidity(amountA, amountB);
     }
 
     /**
@@ -214,68 +232,70 @@ contract BlueDiamondTokenLiquidity is
     }
 
     /**
-     * @notice function for changing the primary liquidity status
-     * @param primary_ bool value; true for yes
+     * @notice function for updating the token addresses
+     * @param USDT_ new USDT address
+     * @param BDT_ new BDT address
      */
-    function setPrimaryLiquidity(bool primary_) external onlyOwner {
-        _primaryLiquidity = primary_;
-        emit Events.PrimaryLiquidityStatusModified(primary_);
+    function modifyTokenAddresses(
+        address USDT_,
+        address BDT_
+    ) external onlyOwner {
+        Helpers._checkAddress(USDT_);
+        Helpers._checkAddress(BDT_);
+
+        USDT = USDT_;
+        BDT = BDT_;
+        emit Events.TokenAddressesModified(USDT_, BDT_);
+    }
+
+    /**
+     * @notice function for modifying router address
+     * @param router_ pancake router address
+     */
+    function modifyRouterAddress(address router_) external onlyOwner {
+        Helpers._checkAddress(router_);
+
+        emit Events.RouterAddressModified(router_);
+        PANCAKESWAP_V2_ROUTER = router_;
     }
 
     /**
      * @notice function for returing the slippage rate
      * @return slippageRate_ slippage rate
      */
-    function getSlippageRate() external view returns (uint256) {
+    function slippageRate() external view returns (uint256) {
         return _slippageRate;
     }
 
     /**
-     * @notice function for returing the locking period
-     * @return lockingPeriod_ slippage rate
+     * @notice function for returing the oracle addresses
      */
-    function getLockingPeriod() external view returns (uint256) {
+    function oracleAddresses() external view returns (address, address) {
+        return (USDT_PRICE_ORACLE, BDT_PRICE_ORACLE);
+    }
+
+    /**
+     * @notice function for returing the token addresses
+     */
+    function tokenAddresses() external view returns (address, address) {
+        return (USDT, BDT);
+    }
+
+    /**
+     * @notice function for returing the pancake router address
+     */
+    function routerAddress() external view returns (address) {
+        return (PANCAKESWAP_V2_ROUTER);
+    }
+
+    /**
+     * @notice function for returing the locking period
+     */
+    function lockingPeriod() external view returns (uint256) {
         return _lockingPeriod;
     }
 
     /* Private Helper Functions */
-    /**
-     * @notice function for adding liquidity to the Pancake swap for the pair USDT/BDT
-     * @dev both tokens are from the smart contract. No need to transfer from external sender
-     * @param amountA_ amount of USDT tokens to be added as lliquidity
-     * @param amountAMin_ min amount of USDT tokens expected to be added
-     * @param amountB_ amount of BDT tokens to be added as lliquidity
-     * @param amountBMin_ min amount of BDT tokens expected to be added
-     */
-    function _addLiquidity(
-        uint256 amountA_,
-        uint256 amountB_,
-        uint256 amountAMin_,
-        uint256 amountBMin_
-    ) private returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
-        Helpers._checkAmount(amountAMin_);
-        Helpers._checkAmount(amountBMin_);
-
-        // give approval to the router for adding liquidity
-        _approveUSDT(amountA_);
-        _approveBDT(amountB_);
-
-        // add liquidity
-        (amountA, amountB, liquidity) = IPancakeRouter02(PANCAKESWAP_V2_ROUTER)
-            .addLiquidity(
-                USDT,
-                BDT,
-                amountA_,
-                amountB_,
-                amountAMin_,
-                amountBMin_,
-                address(this),
-                block.timestamp
-            );
-
-        emit Events.AddedLiquidity(amountA, amountB, liquidity);
-    }
-
     /**
      * @notice function for finding the minimum amount of tokens (USDT/BDT)
      * to be received upon removing liquidity
@@ -314,22 +334,20 @@ contract BlueDiamondTokenLiquidity is
      * if the allowance exist, it will increase allowance by deudcting the
      * existing amount. Otherwise will give approval for the required amount
      */
-    function _approveUSDT(uint256 amount_) private {
-        IERC20Upgradeable _usdt = IERC20Upgradeable(USDT);
-
-        uint256 allowance = _usdt.allowance(
+    function _approveUSDT(IERC20Upgradeable usdt_, uint256 amount_) private {
+        uint256 allowance = usdt_.allowance(
             address(this),
             PANCAKESWAP_V2_ROUTER
         );
 
         // allow pancake swap router to spend the USDT
         if (allowance > 0) {
-            _usdt.safeIncreaseAllowance(
+            usdt_.safeIncreaseAllowance(
                 PANCAKESWAP_V2_ROUTER,
                 amount_ - allowance
             );
         } else {
-            _usdt.safeApprove(PANCAKESWAP_V2_ROUTER, amount_);
+            usdt_.safeApprove(PANCAKESWAP_V2_ROUTER, amount_);
         }
     }
 
@@ -342,18 +360,16 @@ contract BlueDiamondTokenLiquidity is
      * @param lpAmount_ LP token amount
      */
     function _approveLP(IERC20Upgradeable lp_, uint256 lpAmount_) private {
-        IERC20Upgradeable _lp = lp_;
-
-        uint256 allowance = _lp.allowance(address(this), PANCAKESWAP_V2_ROUTER);
+        uint256 allowance = lp_.allowance(address(this), PANCAKESWAP_V2_ROUTER);
 
         // allow pancake swap router to spend the USDT
         if (allowance > 0) {
-            _lp.safeIncreaseAllowance(
+            lp_.safeIncreaseAllowance(
                 PANCAKESWAP_V2_ROUTER,
                 lpAmount_ - allowance
             );
         } else {
-            _lp.safeApprove(PANCAKESWAP_V2_ROUTER, lpAmount_);
+            lp_.safeApprove(PANCAKESWAP_V2_ROUTER, lpAmount_);
         }
     }
 
@@ -363,22 +379,20 @@ contract BlueDiamondTokenLiquidity is
      * if the allowance exist, it will increase allowance by deducting the
      * existing amount. Otherwise will give approval for the required amount
      */
-    function _approveBDT(uint256 amount_) private {
-        IERC20Upgradeable _bdt = IERC20Upgradeable(BDT);
-
-        uint256 allowance = _bdt.allowance(
+    function _approveBDT(IERC20Upgradeable bdt_, uint256 amount_) private {
+        uint256 allowance = bdt_.allowance(
             address(this),
             PANCAKESWAP_V2_ROUTER
         );
 
         // allow pancake swap router to spend the BDT
         if (allowance > 0) {
-            _bdt.safeIncreaseAllowance(
+            bdt_.safeIncreaseAllowance(
                 PANCAKESWAP_V2_ROUTER,
                 amount_ - allowance
             );
         } else {
-            _bdt.safeApprove(PANCAKESWAP_V2_ROUTER, amount_);
+            bdt_.safeApprove(PANCAKESWAP_V2_ROUTER, amount_);
         }
     }
 
@@ -402,6 +416,11 @@ contract BlueDiamondTokenLiquidity is
         // if the price is zero or negative abort the txn
         if (usdtPrice_ <= 0 || bdtPrice_ <= 0) {
             revert Errors.InvalidPrice();
+        }
+
+        // check decimals
+        if (usdtDecimals_ == 0 || bdtDecimals_ == 0) {
+            revert Errors.ZeroDecimals();
         }
 
         // amount of BDT tokens for liquidity

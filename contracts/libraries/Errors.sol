@@ -21,5 +21,6 @@ library Errors {
     error NotEnoughBDTTokenForLiquidity();
     error NotEnoughLPTokensToRemoveLiquidity();
     error InvalidRate();
+    error ZeroDecimals();
     error LockingPeriodNotOver();
 }
